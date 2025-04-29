@@ -1,0 +1,6 @@
+pydicom>=2.4.2
+numpy>=1.23.0
+Pillow>=9.0.0
+
+# Optional (for NIfTI support)
+nibabel>=5.0.0
