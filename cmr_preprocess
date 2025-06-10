@@ -1,0 +1,87 @@
+import os
+import pydicom
+from collections import defaultdict
+from pprint import pprint
+
+# --- Define classification rules ---
+def classify_view(description: str) -> str:
+    desc = description.upper()
+    if 'SAX' in desc or 'SHORTAXIS' in desc:
+        return 'SA'
+    elif '2CH' in desc:
+        return 'LA_2CH'
+    elif '3CH' in desc:
+        return 'LA_3CH'
+    elif '4CH' in desc:
+        return 'LA_4CH'
+    elif 'LONGAXIS' in desc or 'LAX' in desc:
+        return 'LA_OTHER'
+    else:
+        return 'OTHER'
+
+# --- Parse one series ---
+def parse_series(series_path):
+    data = []
+    for f in os.listdir(series_path):
+        if f.lower().endswith('.dcm'):
+            try:
+                dcm = pydicom.dcmread(os.path.join(series_path, f), stop_before_pixels=True)
+                data.append(dcm)
+            except:
+                continue
+    if not data:
+        return None
+
+    first = data[0]
+    series_info = {
+        "SeriesDescription": getattr(first, "SeriesDescription", "Unknown"),
+        "SeriesInstanceUID": getattr(first, "SeriesInstanceUID", os.path.basename(series_path)),
+        "ViewType": classify_view(getattr(first, "SeriesDescription", "")),
+        "Modality": first.Modality,
+        "NumFrames": len(set(getattr(dcm, "InstanceNumber", i) for i, dcm in enumerate(data))),
+        "SlicePositions": sorted(set(
+            tuple(getattr(dcm, "ImagePositionPatient", [0, 0, i]))[2]
+            for i, dcm in enumerate(data)
+            if hasattr(dcm, "ImagePositionPatient")
+        )),
+        "Resolution": (getattr(first, "Rows", None), getattr(first, "Columns", None))
+    }
+    series_info["NumSlices"] = len(series_info["SlicePositions"])
+    return series_info
+
+# --- Traverse all series in a patient/study directory ---
+def summarize_study(study_path):
+    summary = []
+    for subfolder in os.listdir(study_path):
+        full_path = os.path.join(study_path, subfolder)
+        if os.path.isdir(full_path):
+            info = parse_series(full_path)
+            if info:
+                summary.append(info)
+    return summary
+
+# --- Group and summarize overall stats ---
+def summarize_by_type(series_list):
+    counts = defaultdict(list)
+    for s in series_list:
+        counts[s['ViewType']].append(s)
+
+    summary = {}
+    for view_type, series in counts.items():
+        summary[view_type] = {
+            "NumSeries": len(series),
+            "TotalFrames": sum(s["NumFrames"] for s in series),
+            "TotalSlices": sum(s["NumSlices"] for s in series),
+            "Resolutions": list(set(s["Resolution"] for s in series)),
+            "SeriesDescriptions": [s["SeriesDescription"] for s in series]
+        }
+    return summary
+
+# --- Main ---
+if __name__ == "__main__":
+    root_dir = "/path/to/extracted/study"  # <- UPDATE THIS PATH
+    series_data = summarize_study(root_dir)
+    summary = summarize_by_type(series_data)
+
+    print(f"\n--- Study Summary for: {root_dir} ---\n")
+    pprint(summary)
