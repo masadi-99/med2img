@@ -85,3 +85,66 @@ if __name__ == "__main__":
 
     print(f"\n--- Study Summary for: {root_dir} ---\n")
     pprint(summary)
+
+
+
+
+
+import os, pydicom
+from PIL import Image
+import numpy as np
+
+root_dir = "/path/to/extracted/study"  # ← update this
+
+target_series = [
+    'SAX-st FGRE CINE BH',
+    '2CH FGRE CINE BH',
+    '3CH FGRE CINE BH',
+    '4CH FGRE CINE BH'
+]
+
+def find_target_series_folders(root_dir):
+    results = []
+    for sub in os.listdir(root_dir):
+        path = os.path.join(root_dir, sub)
+        if os.path.isdir(path):
+            for f in os.listdir(path):
+                if f.lower().endswith(".dcm"):
+                    try:
+                        dcm = pydicom.dcmread(os.path.join(path, f), stop_before_pixels=True)
+                        desc = getattr(dcm, "SeriesDescription", "").strip()
+                        if desc in target_series:
+                            results.append((desc, path))
+                        break
+                    except: continue
+    return results
+
+series_list = find_target_series_folders(root_dir)
+out_root = os.path.expanduser("~/cmr_samples")
+os.makedirs(out_root, exist_ok=True)
+
+for desc, path in series_list:
+    desc_safe = desc.replace(" ", "_").replace(":", "_")
+    out_series = os.path.join(out_root, desc_safe)
+    os.makedirs(out_series, exist_ok=True)
+    dicoms = []
+    for f in os.listdir(path):
+        if f.lower().endswith(".dcm"):
+            try:
+                dicoms.append(pydicom.dcmread(os.path.join(path, f)))
+            except: continue
+    def get_z(d): return round(d.ImagePositionPatient[2], 3) if "ImagePositionPatient" in d else 0
+    def get_t(d): return getattr(d, "InstanceNumber", 0)
+    grouped = {}
+    for d in dicoms:
+        z = get_z(d)
+        grouped.setdefault(z, []).append(d)
+    for i, (z, frames) in enumerate(sorted(grouped.items())):
+        frames.sort(key=get_t)
+        slice_dir = os.path.join(out_series, f"slice_{i:02d}")
+        os.makedirs(slice_dir, exist_ok=True)
+        for t, dcm in enumerate(frames):
+            img = dcm.pixel_array.astype(np.float32)
+            img -= img.min(); img /= img.max(); img *= 255
+            Image.fromarray(img.astype(np.uint8)).convert("L").save(os.path.join(slice_dir, f"frame_{t:02d}.jpg"))
+    print(f"Saved {sum(len(v) for v in grouped.values())} frames in {desc}")
